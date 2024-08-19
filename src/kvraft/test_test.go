@@ -14,6 +14,7 @@ import "io/ioutil"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
+// 测试工具慷慨地允许解决方案在一秒内完成选举（远远超出论文中的超时范围）。
 const electionTimeout = 1 * time.Second
 
 const linearizabilityCheckTimeout = 1 * time.Second
@@ -41,6 +42,9 @@ func (log *OpLog) Read() []porcupine.Operation {
 // absolute timestamps with `time.Now().UnixNano()` (which uses the wall
 // clock), we measure time relative to `t0` using `time.Since(t0)`, which uses
 // the monotonic clock
+// 为了确保时间戳使用单调时钟，
+// 而不是使用墙钟计算绝对时间戳，
+// 我们使用time.Since(t0)相对于t0来测量时间，这使用了单调时钟。
 var t0 = time.Now()
 
 // get/put/putappend that keep counts
@@ -48,8 +52,9 @@ func Get(cfg *config, ck *Clerk, key string, log *OpLog, cli int) string {
 	start := int64(time.Since(t0))
 	v := ck.Get(key)
 	end := int64(time.Since(t0))
+	//增加一个操作次数
 	cfg.op()
-	if log != nil {
+	if log != nil { //追加一条日志
 		log.Append(porcupine.Operation{
 			Input:    models.KvInput{Op: 0, Key: key},
 			Output:   models.KvOutput{Value: v},
@@ -102,6 +107,7 @@ func check(cfg *config, t *testing.T, ck *Clerk, key string, value string) {
 }
 
 // a client runs the function f and then signals it is done
+// 一个客户端运行函数 f，然后发出完成信号。
 func run_client(t *testing.T, cfg *config, me int, ca chan bool, fn func(me int, ck *Clerk, t *testing.T)) {
 	ok := false
 	defer func() { ca <- ok }()
@@ -112,6 +118,7 @@ func run_client(t *testing.T, cfg *config, me int, ca chan bool, fn func(me int,
 }
 
 // spawn ncli clients and wait until they are all done
+// 生成 ncli 个客户端并等待它们全部完成。
 func spawn_clients_and_wait(t *testing.T, cfg *config, ncli int, fn func(me int, ck *Clerk, t *testing.T)) {
 	ca := make([]chan bool, ncli)
 	for cli := 0; cli < ncli; cli++ {
@@ -129,12 +136,14 @@ func spawn_clients_and_wait(t *testing.T, cfg *config, ncli int, fn func(me int,
 }
 
 // predict effect of Append(k, val) if old value is prev.
+// 预测如果旧值是 prev 时 Append(k, val) 操作的效果。
 func NextValue(prev string, val string) string {
 	return prev + val
 }
 
 // check that for a specific client all known appends are present in a value,
 // and in order
+// 检查对于特定客户端，所有已知的追加操作是否都存在于一个值中，并且按顺序排列。
 func checkClntAppends(t *testing.T, clnt int, v string, count int) {
 	lastoff := -1
 	for j := 0; j < count; j++ {
@@ -156,6 +165,7 @@ func checkClntAppends(t *testing.T, clnt int, v string, count int) {
 
 // check that all known appends are present in a value,
 // and are in order for each concurrent client.
+// 检查所有已知的追加操作是否存在于一个值中，并且对于每个并发客户端都是按顺序的。
 func checkConcurrentAppends(t *testing.T, v string, counts []int) {
 	nclients := len(counts)
 	for i := 0; i < nclients; i++ {
@@ -179,13 +189,16 @@ func checkConcurrentAppends(t *testing.T, v string, counts []int) {
 }
 
 // repartition the servers periodically
+// 定期重新分区服务器。
 func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 	defer func() { ch <- true }()
+	//不再进行分区了 
 	for atomic.LoadInt32(done) == 0 {
 		a := make([]int, cfg.n)
 		for i := 0; i < cfg.n; i++ {
 			a[i] = (rand.Int() % 2)
 		}
+		//二维数组
 		pa := make([][]int, 2)
 		for i := 0; i < 2; i++ {
 			pa[i] = make([]int, 0)
@@ -196,6 +209,11 @@ func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 			}
 		}
 		cfg.partition(pa[0], pa[1])
+		// DPrintB("开始进行分区：")
+		// for i:=0;i<len(pa[0]);i++ {
+		// 	DPrintB("%v ",pa[0][i])
+		// }
+		// DPrintB("\n")
 		time.Sleep(electionTimeout + time.Duration(rand.Int63()%200)*time.Millisecond)
 	}
 }
@@ -209,6 +227,11 @@ func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 // maxraftstate is a positive number, the size of the state for Raft (i.e., log
 // size) shouldn't exceed 8*maxraftstate. If maxraftstate is negative,
 // snapshots shouldn't be used.
+// 基本测试如下：一个或多个客户端在一段时间内向一组服务器提交追加/获取操作。
+// 在时间结束后，测试会检查某个键的所有追加值是否存在且顺序正确。如果设置了 unreliable，RPC 可能会失败。
+// 如果设置了 crash，服务器在时间结束后会崩溃并重启。
+// 如果设置了 partitions，测试会并发地重新分区网络，同时进行客户端和服务器操作。如果 maxraftstate 是正数
+// Raft 的状态大小（即日志大小）不应超过 8*maxraftstate。如果 maxraftstate 是负数，则不应使用快照。
 func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliable bool, crash bool, partitions bool, maxraftstate int, randomkeys bool) {
 
 	title := "Test: "
@@ -242,13 +265,12 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 
 	cfg.begin(title)
 	opLog := &OpLog{}
-
 	ck := cfg.makeClient(cfg.All())
-
 	done_partitioner := int32(0)
 	done_clients := int32(0)
 	ch_partitioner := make(chan bool)
 	clnts := make([]chan int, nclients)
+
 	for i := 0; i < nclients; i++ {
 		clnts[i] = make(chan int)
 	}
@@ -261,8 +283,8 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 			defer func() {
 				clnts[cli] <- j
 			}()
-			last := "" // only used when not randomkeys
-			if !randomkeys {
+			last := ""       // only used when not randomkeys
+			if !randomkeys { //发送一条cli信息
 				Put(cfg, myck, strconv.Itoa(cli), last, opLog, cli)
 			}
 			for atomic.LoadInt32(&done_clients) == 0 {
@@ -276,6 +298,7 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 				if (rand.Int() % 1000) < 500 {
 					// log.Printf("%d: client new append %v\n", cli, nv)
 					Append(cfg, myck, key, nv, opLog, cli)
+					// DPrintB("%v Append了%v\n",cli,j) 
 					if !randomkeys {
 						last = NextValue(last, nv)
 					}
@@ -284,10 +307,12 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 					// we only do this when using random keys, because it would break the
 					// check done after Get() operations
 					Put(cfg, myck, key, nv, opLog, cli)
+					// DPrintB("%v Put了%v\n",cli,j) 
 					j++
 				} else {
 					// log.Printf("%d: client new get %v\n", cli, key)
 					v := Get(cfg, myck, key, opLog, cli)
+					// DPrintB("%v Get了%v:%v\n",cli,j,v) 
 					// the following check only makes sense when we're not using random keys
 					if !randomkeys && v != last {
 						t.Fatalf("get wrong value, key %v, wanted:\n%v\n, got\n%v\n", key, last, v)
@@ -295,36 +320,39 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 				}
 			}
 		})
-
 		if partitions {
+			// 允许客户端执行一些操作而不受干扰。
 			// Allow the clients to perform some operations without interruption
 			time.Sleep(1 * time.Second)
 			go partitioner(t, cfg, ch_partitioner, &done_partitioner)
 		}
 		time.Sleep(5 * time.Second)
 
-		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit
-		atomic.StoreInt32(&done_partitioner, 1) // tell partitioner to quit
-
+		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit，停止发送消息
+		atomic.StoreInt32(&done_partitioner, 1) // tell partitioner to quit 停止进行分区 
 		if partitions {
 			// log.Printf("wait for partitioner\n")
+			//等待不再进行分区  
 			<-ch_partitioner
 			// reconnect network and submit a request. A client may
 			// have submitted a request in a minority.  That request
 			// won't return until that server discovers a new term
 			// has started.
+			// 重新连接网络并提交一个请求。客户端可能已经在少数派中提交了一个请求。
+			// 该请求直到该服务器发现新任期已经开始才会返回。
+
 			cfg.ConnectAll()
 			// wait for a while so that we have a new term
 			time.Sleep(electionTimeout)
 		}
-
-		if crash {
+		if crash { //全部重新启动了 
 			// log.Printf("shutdown servers\n")
 			for i := 0; i < nservers; i++ {
 				cfg.ShutdownServer(i)
 			}
 			// Wait for a while for servers to shutdown, since
 			// shutdown isn't a real crash and isn't instantaneous
+			// 等待一段时间让服务器关闭，因为关闭不是真正的崩溃，也不是瞬间完成的。
 			time.Sleep(electionTimeout)
 			// log.Printf("restart servers\n")
 			// crash and re-start all
@@ -337,19 +365,20 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 		// log.Printf("wait for clients\n")
 		for i := 0; i < nclients; i++ {
 			// log.Printf("read from clients %d\n", i)
-			j := <-clnts[i]
+			j := <-clnts[i] //最后一条命令的下标 
 			// if j < 10 {
 			// 	log.Printf("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
 			// }
 			key := strconv.Itoa(i)
 			// log.Printf("Check %v for client %d\n", j, i)
 			v := Get(cfg, ck, key, opLog, 0)
-			if !randomkeys {
+			// fmt.Printf("我是%v，我的j是%v，我get了:%v\n",i,j,v) 
+			if !randomkeys { //检查每一条都有 
 				checkClntAppends(t, i, v, j)
 			}
 		}
 
-		if maxraftstate > 0 {
+		if maxraftstate > 0 { //进行快照 
 			// Check maximum after the servers have processed all client
 			// requests and had time to checkpoint.
 			sz := cfg.LogSize()
@@ -357,7 +386,7 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 				t.Fatalf("logs were not trimmed (%v > 8*%v)", sz, maxraftstate)
 			}
 		}
-		if maxraftstate < 0 {
+		if maxraftstate < 0 { //不进行快照 
 			// Check that snapshots are not used
 			ssz := cfg.SnapshotSize()
 			if ssz > 0 {
@@ -391,17 +420,18 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 func GenericTestSpeed(t *testing.T, part string, maxraftstate int) {
 	const nservers = 3
 	const numOps = 1000
+	//创建服务器
 	cfg := make_config(t, nservers, false, maxraftstate)
 	defer cfg.cleanup()
-
+	//创建1个客户端连接所有服务器
 	ck := cfg.makeClient(cfg.All())
 
 	cfg.begin(fmt.Sprintf("Test: ops complete fast enough (%s)", part))
 
 	// wait until first op completes, so we know a leader is elected
 	// and KV servers are ready to process client requests
+	// 等待直到第一个操作完成，这样我们就知道已经选举出了一个领导者，并且 KV 服务器已经准备好处理客户端请求。
 	ck.Get("x")
-
 	start := time.Now()
 	for i := 0; i < numOps; i++ {
 		ck.Append("x", "x 0 "+strconv.Itoa(i)+" y")
@@ -415,6 +445,7 @@ func GenericTestSpeed(t *testing.T, part string, maxraftstate int) {
 	const heartbeatInterval = 100 * time.Millisecond
 	const opsPerInterval = 3
 	const timePerOp = heartbeatInterval / opsPerInterval
+	//33s为上限
 	if dur > numOps*timePerOp {
 		t.Fatalf("Operations completed too slowly %v/op > %v/op\n", dur/numOps, timePerOp)
 	}
@@ -422,46 +453,51 @@ func GenericTestSpeed(t *testing.T, part string, maxraftstate int) {
 	cfg.end()
 }
 
+// 1个客户端，5个服务器，网络可信，没用服务器奔溃，没用分区，没用开启快照，不是发送随机的key
 func TestBasic3A(t *testing.T) {
 	// Test: one client (3A) ...
 	GenericTest(t, "3A", 1, 5, false, false, false, -1, false)
 }
 
+// 测试速度，上限为33s
 func TestSpeed3A(t *testing.T) {
 	GenericTestSpeed(t, "3A", -1)
 }
 
+// 多个客户端发送信息
 func TestConcurrent3A(t *testing.T) {
 	// Test: many clients (3A) ...
 	GenericTest(t, "3A", 5, 5, false, false, false, -1, false)
 }
 
+// 多个客户端+网络不可靠
 func TestUnreliable3A(t *testing.T) {
 	// Test: unreliable net, many clients (3A) ...
 	GenericTest(t, "3A", 5, 5, true, false, false, -1, false)
 }
 
+// 3个服务器，一个客户端
 func TestUnreliableOneKey3A(t *testing.T) {
 	const nservers = 3
 	cfg := make_config(t, nservers, true, -1)
 	defer cfg.cleanup()
-
+	//创建一个客户端ck
 	ck := cfg.makeClient(cfg.All())
 
 	cfg.begin("Test: concurrent append to same key, unreliable (3A)")
 
 	Put(cfg, ck, "k", "", nil, -1)
-
+	//开启5个客户端并行发送10条信息
 	const nclient = 5
 	const upto = 10
 	spawn_clients_and_wait(t, cfg, nclient, func(me int, myck *Clerk, t *testing.T) {
 		n := 0
 		for n < upto {
 			Append(cfg, myck, "k", "x "+strconv.Itoa(me)+" "+strconv.Itoa(n)+" y", nil, -1)
+			// fmt.Printf("%vappend了第%v号命令\n",myck.id%100,n)
 			n++
 		}
 	})
-
 	var counts []int
 	for i := 0; i < nclient; i++ {
 		counts = append(counts, upto)
@@ -476,6 +512,8 @@ func TestUnreliableOneKey3A(t *testing.T) {
 // Submit a request in the minority partition and check that the requests
 // doesn't go through until the partition heals.  The leader in the original
 // network ends up in the minority partition.
+// 在少数派分区中提交一个请求，并检查请求在分区恢复之前是否无法通过。
+// 原始网络中的领导者最终会位于少数派分区中。这里使用的是make_partion 
 func TestOnePartition3A(t *testing.T) {
 	const nservers = 5
 	cfg := make_config(t, nservers, false, -1)
@@ -485,22 +523,24 @@ func TestOnePartition3A(t *testing.T) {
 	Put(cfg, ck, "1", "13", nil, -1)
 
 	cfg.begin("Test: progress in majority (3A)")
-
+	//分成2个p1，3个p2，其中原本的leader在p2中
 	p1, p2 := cfg.make_partition()
 	cfg.partition(p1, p2)
-
 	ckp1 := cfg.makeClient(p1)  // connect ckp1 to p1
 	ckp2a := cfg.makeClient(p2) // connect ckp2a to p2
 	ckp2b := cfg.makeClient(p2) // connect ckp2b to p2
-
+	// for i := 0; i < len(p1); i++ {
+	// 	fmt.Printf("%v ", p1[i])
+	// }
+	// fmt.Printf("\n")
+	//put一条到三个的集群中 
 	Put(cfg, ckp1, "1", "14", nil, -1)
 	check(cfg, t, ckp1, "1", "14")
-
 	cfg.end()
 
 	done0 := make(chan bool)
 	done1 := make(chan bool)
-
+	//向两个的集群并行发送消息，一个发送put一个发送get
 	cfg.begin("Test: no progress in minority (3A)")
 	go func() {
 		Put(cfg, ckp2a, "1", "15", nil, -1)
@@ -510,7 +550,7 @@ func TestOnePartition3A(t *testing.T) {
 		Get(cfg, ckp2b, "1", nil, -1) // different clerk in p2
 		done1 <- true
 	}()
-
+	//put操作不可能成功，get操作也不可能成功
 	select {
 	case <-done0:
 		t.Fatalf("Put in minority completed")
@@ -518,27 +558,32 @@ func TestOnePartition3A(t *testing.T) {
 		t.Fatalf("Get in minority completed")
 	case <-time.After(time.Second):
 	}
+	//最终结果一定为超时 
 
 	check(cfg, t, ckp1, "1", "14")
+	//向三个的集群发送一条16 
 	Put(cfg, ckp1, "1", "16", nil, -1)
 	check(cfg, t, ckp1, "1", "16")
 
 	cfg.end()
 
 	cfg.begin("Test: completion after heal (3A)")
-
-	cfg.ConnectAll()
+	//合并分区 
+	cfg.ConnectAll() 
+	//原本两个客户端可以联系所有服务区 
 	cfg.ConnectClient(ckp2a, cfg.All())
 	cfg.ConnectClient(ckp2b, cfg.All())
 
-	time.Sleep(electionTimeout)
+	time.Sleep(electionTimeout)	
 
+	//此时可以完成put请求 
 	select {
 	case <-done0:
 	case <-time.After(30 * 100 * time.Millisecond):
 		t.Fatalf("Put did not complete")
 	}
 
+	//此时可以完成get请求 
 	select {
 	case <-done1:
 	case <-time.After(30 * 100 * time.Millisecond):
@@ -546,21 +591,24 @@ func TestOnePartition3A(t *testing.T) {
 	default:
 	}
 
+	//此时这条15一定存在 
 	check(cfg, t, ck, "1", "15")
 
 	cfg.end()
 }
 
+//只有一个客户端，服务区分区 
 func TestManyPartitionsOneClient3A(t *testing.T) {
 	// Test: partitions, one client (3A) ...
 	GenericTest(t, "3A", 1, 5, false, false, true, -1, false)
 }
-
+//多个客户端，服务器分区 
 func TestManyPartitionsManyClients3A(t *testing.T) {
 	// Test: partitions, many clients (3A) ...
 	GenericTest(t, "3A", 5, 5, false, false, true, -1, false)
 }
 
+//一个客户端，crash 
 func TestPersistOneClient3A(t *testing.T) {
 	// Test: restarts, one client (3A) ...
 	GenericTest(t, "3A", 1, 5, false, true, false, -1, false)
@@ -591,12 +639,12 @@ func TestPersistPartitionUnreliableLinearizable3A(t *testing.T) {
 	GenericTest(t, "3A", 15, 7, true, true, true, -1, true)
 }
 
-//
 // if one server falls behind, then rejoins, does it
 // recover by using the InstallSnapshot RPC?
 // also checks that majority discards committed log entries
 // even if minority doesn't respond.
-//
+// 如果一个服务器落后，然后重新加入，它是否通过使用 InstallSnapshot RPC 来恢复？
+// 同时检查大多数节点是否丢弃已提交的日志条目，即使少数节点没有响应。
 func TestSnapshotRPC3B(t *testing.T) {
 	const nservers = 3
 	maxraftstate := 1000
@@ -611,6 +659,7 @@ func TestSnapshotRPC3B(t *testing.T) {
 	check(cfg, t, ck, "a", "A")
 
 	// a bunch of puts into the majority partition.
+	//向多数的分区puts一些命令 
 	cfg.partition([]int{0, 1}, []int{2})
 	{
 		ck1 := cfg.makeClient([]int{0, 1})
@@ -624,12 +673,14 @@ func TestSnapshotRPC3B(t *testing.T) {
 	// check that the majority partition has thrown away
 	// most of its log entries.
 	sz := cfg.LogSize()
-	if sz > 8*maxraftstate {
+	if sz > 8*maxraftstate { 
+		//log没有修剪 
 		t.Fatalf("logs were not trimmed (%v > 8*%v)", sz, maxraftstate)
 	}
 
 	// now make group that requires participation of
 	// lagging server, so that it has to catch up.
+	// 现在创建一个需要滞后服务器参与的组，以便让其赶上。
 	cfg.partition([]int{0, 2}, []int{1})
 	{
 		ck1 := cfg.makeClient([]int{0, 2})
@@ -664,14 +715,14 @@ func TestSnapshotSize3B(t *testing.T) {
 	ck := cfg.makeClient(cfg.All())
 
 	cfg.begin("Test: snapshot size is reasonable (3B)")
-
+	//发送200条信息 
 	for i := 0; i < 200; i++ {
 		Put(cfg, ck, "x", "0", nil, -1)
 		check(cfg, t, ck, "x", "0")
 		Put(cfg, ck, "x", "1", nil, -1)
 		check(cfg, t, ck, "x", "1")
 	}
-
+	//
 	// check that servers have thrown away most of their log entries
 	sz := cfg.LogSize()
 	if sz > 8*maxraftstate {

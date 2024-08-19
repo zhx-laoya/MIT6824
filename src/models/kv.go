@@ -15,6 +15,7 @@ type KvOutput struct {
 }
 
 var KvModel = porcupine.Model{
+	//按照键名排序 
 	Partition: func(history []porcupine.Operation) [][]porcupine.Operation {
 		m := make(map[string][]porcupine.Operation)
 		for _, v := range history {

@@ -7,6 +7,7 @@ import "runtime"
 import "time"
 import "fmt"
 
+
 type JunkArgs struct {
 	X int
 }
@@ -19,21 +20,21 @@ type JunkServer struct {
 	log1 []string
 	log2 []int
 }
-
+//log1添加一个string条目 
 func (js *JunkServer) Handler1(args string, reply *int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 	js.log1 = append(js.log1, args)
-	*reply, _ = strconv.Atoi(args)
+	*reply, _ = strconv.Atoi(args) 
 }
-
+//log2添加一个int条目 
 func (js *JunkServer) Handler2(args int, reply *string) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 	js.log2 = append(js.log2, args)
 	*reply = "handler2-" + strconv.Itoa(args)
 }
-
+///将reply取负
 func (js *JunkServer) Handler3(args int, reply *int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -41,22 +42,23 @@ func (js *JunkServer) Handler3(args int, reply *int) {
 	*reply = -args
 }
 
+//将reply的值置为pointer
 // args is a pointer
 func (js *JunkServer) Handler4(args *JunkArgs, reply *JunkReply) {
 	reply.X = "pointer"
 }
-
+//将reply的值置为no pointer 
 // args is a not pointer
 func (js *JunkServer) Handler5(args JunkArgs, reply *JunkReply) {
 	reply.X = "no pointer"
 }
-
+//reply的值置为args的长度 
 func (js *JunkServer) Handler6(args string, reply *int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 	*reply = len(args)
 }
-
+//将reply的值置为args个y的字符串 
 func (js *JunkServer) Handler7(args int, reply *string) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -67,23 +69,27 @@ func (js *JunkServer) Handler7(args int, reply *string) {
 }
 
 func TestBasic(t *testing.T) {
+	// 设置当前程序的最大可并发执行的 Goroutine 数量 
 	runtime.GOMAXPROCS(4)
 
 	rn := MakeNetwork()
 	defer rn.Cleanup()
-
+	//创建一个客户端 
 	e := rn.MakeEnd("end1-99")
 
 	js := &JunkServer{}
+	//返回一个包含js服务的service指针,即注册一个包含它所有handler的服务器 
 	svc := MakeService(js)
-
+	//将这些服务注册到创建的服务器上
 	rs := MakeServer()
 	rs.AddService(svc)
+	//server99为这个服务器的名字 
 	rn.AddServer("server99", rs)
-
+	//将客户端连接到服务器上 
 	rn.Connect("end1-99", "server99")
+	//将客户端加入到网络中 
 	rn.Enable("end1-99", true)
-
+	
 	{
 		reply := ""
 		e.Call("JunkServer.Handler2", 111, &reply)

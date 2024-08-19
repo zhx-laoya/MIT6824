@@ -16,13 +16,14 @@ import "fmt"
 import "time"
 import "sync/atomic"
 
+//rand一个字符串 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
 	crand.Read(b)
 	s := base64.URLEncoding.EncodeToString(b)
 	return s[0:n]
 }
-
+//创建种子 
 func makeSeed() int64 {
 	max := big.NewInt(int64(1) << 62)
 	bigx, _ := crand.Int(crand.Reader, max)
@@ -31,6 +32,7 @@ func makeSeed() int64 {
 }
 
 // Randomize server handles
+// 将客户端顺序打乱  
 func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
 	sa := make([]*labrpc.ClientEnd, len(kvh))
 	copy(sa, kvh)
@@ -41,24 +43,27 @@ func random_handles(kvh []*labrpc.ClientEnd) []*labrpc.ClientEnd {
 	return sa
 }
 
+
 type config struct {
 	mu           sync.Mutex
 	t            *testing.T
 	net          *labrpc.Network
 	n            int
-	kvservers    []*KVServer
+	kvservers    []*KVServer //服务端 
 	saved        []*raft.Persister
+	//"每个服务器发送的ClientEnd的名称
 	endnames     [][]string // names of each server's sending ClientEnds
-	clerks       map[*Clerk][]string
-	nextClientId int
+	clerks       map[*Clerk][]string //客户端，使用一个map，右*clerk 指向一个string，一个clerk代表一个客户端群体  
+	nextClientId int 
 	maxraftstate int
 	start        time.Time // time at which make_config() was called
-	// begin()/end() statistics
+	// begin()/end() statistics 
 	t0    time.Time // time at which test_test.go called cfg.begin()
 	rpcs0 int       // rpcTotal() at start of test
 	ops   int32     // number of clerk get/put/append method calls
 }
 
+// 每个测试时限为两分钟 
 func (cfg *config) checkTimeout() {
 	// enforce a two minute real-time limit on each test
 	if !cfg.t.Failed() && time.Since(cfg.start) > 120*time.Second {
@@ -66,6 +71,7 @@ func (cfg *config) checkTimeout() {
 	}
 }
 
+// 清空所有并检测时限 
 func (cfg *config) cleanup() {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
@@ -78,7 +84,7 @@ func (cfg *config) cleanup() {
 	cfg.checkTimeout()
 }
 
-// Maximum log size across all servers
+// Maximum log size across all servers 最长的日志长度(byte单位)
 func (cfg *config) LogSize() int {
 	logsize := 0
 	for i := 0; i < cfg.n; i++ {
@@ -90,7 +96,7 @@ func (cfg *config) LogSize() int {
 	return logsize
 }
 
-// Maximum snapshot size across all servers
+// Maximum snapshot size across all servers 最长的快照长度(byte单位)
 func (cfg *config) SnapshotSize() int {
 	snapshotsize := 0
 	for i := 0; i < cfg.n; i++ {
@@ -104,6 +110,8 @@ func (cfg *config) SnapshotSize() int {
 
 // attach server i to servers listed in to
 // caller must hold cfg.mu
+// 将服务器 i 连接到列在 to 中的服务器
+// 调用者必须持有 cfg.mu
 func (cfg *config) connectUnlocked(i int, to []int) {
 	// log.Printf("connect peer %d to %v\n", i, to)
 
@@ -128,6 +136,8 @@ func (cfg *config) connect(i int, to []int) {
 
 // detach server i from the servers listed in from
 // caller must hold cfg.mu
+// 从列在 from 中的服务器中分离服务器 i
+// 调用者必须持有 cfg.mu
 func (cfg *config) disconnectUnlocked(i int, from []int) {
 	// log.Printf("disconnect peer %d from %v\n", i, from)
 
@@ -153,7 +163,7 @@ func (cfg *config) disconnect(i int, from []int) {
 	defer cfg.mu.Unlock()
 	cfg.disconnectUnlocked(i, from)
 }
-
+//返回一个长度为cfg.n的数组all，且all[i]=i 
 func (cfg *config) All() []int {
 	all := make([]int, cfg.n)
 	for i := 0; i < cfg.n; i++ {
@@ -162,6 +172,7 @@ func (cfg *config) All() []int {
 	return all
 }
 
+//所有服务器都相互连接 
 func (cfg *config) ConnectAll() {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
@@ -171,6 +182,7 @@ func (cfg *config) ConnectAll() {
 }
 
 // Sets up 2 partitions with connectivity between servers in each  partition.
+// 设置了 2 个具有各自分区内服务器之间连接性的分区。
 func (cfg *config) partition(p1 []int, p2 []int) {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
@@ -188,6 +200,8 @@ func (cfg *config) partition(p1 []int, p2 []int) {
 // Create a clerk with clerk specific server names.
 // Give it connections to all of the servers, but for
 // now enable only connections to servers in to[].
+// 使用特定于 clerk 的服务器名称创建一个 clerk。
+// 给它连接到所有服务器，但目前只启用连接到 to[] 中的服务器。
 func (cfg *config) makeClient(to []int) *Clerk {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
@@ -198,12 +212,13 @@ func (cfg *config) makeClient(to []int) *Clerk {
 	for j := 0; j < cfg.n; j++ {
 		endnames[j] = randstring(20)
 		ends[j] = cfg.net.MakeEnd(endnames[j])
+		//j号客户端连接到j号服务器 
 		cfg.net.Connect(endnames[j], j)
 	}
-
+	//打乱客户端顺序 
 	ck := MakeClerk(random_handles(ends))
-	cfg.clerks[ck] = endnames
-	cfg.nextClientId++
+	cfg.clerks[ck] = endnames //代表这个客户端群体中有这些客户端 
+	cfg.nextClientId++ 
 	cfg.ConnectClientUnlocked(ck, to)
 	return ck
 }
@@ -335,6 +350,7 @@ func (cfg *config) Leader() (bool, int) {
 	return false, 0
 }
 
+//p2为leader所在集群,且p2为少数的集群  
 // Partition servers into 2 groups and put current leader in minority
 func (cfg *config) make_partition() ([]int, []int) {
 	_, l := cfg.Leader()
@@ -356,7 +372,7 @@ func (cfg *config) make_partition() ([]int, []int) {
 }
 
 var ncpu_once sync.Once
-
+//这里只初始化了服务器 
 func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config {
 	ncpu_once.Do(func() {
 		if runtime.NumCPU() < 2 {

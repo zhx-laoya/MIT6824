@@ -87,8 +87,8 @@ func make_config(t *testing.T, n int, unreliable bool, snapshot bool) *config {
 
 	cfg.net.LongDelays(true)
 
-	applier := cfg.applier
-	if snapshot {
+	applier := cfg.applier //普通的提交机
+	if snapshot {          //包含了snap的提交机
 		applier = cfg.applierSnap
 	}
 	// create a full set of Rafts.
@@ -106,6 +106,7 @@ func make_config(t *testing.T, n int, unreliable bool, snapshot bool) *config {
 }
 
 // shut down a Raft server but save its persistent state.
+// 保存它的可持久化信息
 func (cfg *config) crash1(i int) {
 	cfg.disconnect(i)
 	cfg.net.DeleteServer(i) // disable client connections to the server.
@@ -117,6 +118,8 @@ func (cfg *config) crash1(i int) {
 	// continues to update the Persister.
 	// but copy old persister's content so that we always
 	// pass Make() the last persisted state.
+	// 为了防止旧实例继续更新持久化器（Persister），这是一个全新的持久化器。
+	// 但是复制旧持久化器的内容，以便我们始终向 Make() 传递最后持久化的状态。
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	}
@@ -128,7 +131,7 @@ func (cfg *config) crash1(i int) {
 		cfg.mu.Lock()
 		cfg.rafts[i] = nil
 	}
-
+	//奔溃前会读取持久化信息
 	if cfg.saved[i] != nil {
 		raftlog := cfg.saved[i].ReadRaftState()
 		snapshot := cfg.saved[i].ReadSnapshot()
@@ -137,10 +140,12 @@ func (cfg *config) crash1(i int) {
 	}
 }
 
+// 返回 当前下标下的条目是否一致，第i号服务器这条命令的前一个下标日志是否存在
 func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 	err_msg := ""
 	v := m.Command
 	for j := 0; j < len(cfg.logs); j++ {
+		//看提交的是否一样
 		if old, oldok := cfg.logs[j][m.CommandIndex]; oldok && old != v {
 			log.Printf("%v: log %v; server %v\n", i, cfg.logs[i], cfg.logs[j])
 			// some server has already committed a different value for this entry!
@@ -148,6 +153,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 				m.CommandIndex, i, m.Command, j, old)
 		}
 	}
+	//看前一个下标是否存在
 	_, prevok := cfg.logs[i][m.CommandIndex-1]
 	cfg.logs[i][m.CommandIndex] = v
 	if m.CommandIndex > cfg.maxIndex {
@@ -158,14 +164,17 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 
 // applier reads message from apply ch and checks that they match the log
 // contents
+// 从通道读取日志消息，并判断是否和日志匹配
 func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 	for m := range applyCh {
 		if m.CommandValid == false {
 			// ignore other types of ApplyMsg
 		} else {
+
 			cfg.mu.Lock()
 			err_msg, prevok := cfg.checkLogs(i, m)
 			cfg.mu.Unlock()
+			//前一个下标不存在则表明越界了
 			if m.CommandIndex > 1 && prevok == false {
 				err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
 			}
@@ -180,6 +189,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 }
 
 // returns "" or error string
+// 解析快照返回的消息，检测第i的服务器第index下标的日志和传入快照的最后一个日志下标是否一致
 func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 	if snapshot == nil {
 		log.Fatalf("nil snapshot")
@@ -202,6 +212,9 @@ func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 	for j := 0; j < len(xlog); j++ {
 		cfg.logs[i][j] = xlog[j]
 	}
+	if cfg.lastApplied[i] > lastIncludedIndex {
+		log.Fatal("我靠")
+	}
 	cfg.lastApplied[i] = lastIncludedIndex
 	return ""
 }
@@ -209,6 +222,7 @@ func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 const SnapShotInterval = 10
 
 // periodically snapshot raft state
+// 定期对raft状态进行快照，对第i个服务器进行快照
 func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	cfg.mu.Lock()
 	rf := cfg.rafts[i]
@@ -219,13 +233,16 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 
 	for m := range applyCh {
 		err_msg := ""
-		if m.SnapshotValid {
+		if m.SnapshotValid { //如果是快照信息
+			// DPrintB("%v向自动机提交了snapshot，lastincludeindex：%v\n",i,m.SnapshotIndex)
 			if rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
 				cfg.mu.Lock()
+				//判断这个快照是否和它的其他信息匹配,并将snapshot里面的日志补齐到
 				err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
 				cfg.mu.Unlock()
 			}
-		} else if m.CommandValid {
+		} else if m.CommandValid { //如果是普通消息
+			// DPrintB("%v向自动机提交了m.commandIndex:%v---------------------------\n",i,m.CommandIndex)
 			if m.CommandIndex != cfg.lastApplied[i]+1 {
 				err_msg = fmt.Sprintf("server %v apply out of order, expected index %v, got %v", i, cfg.lastApplied[i]+1, m.CommandIndex)
 			}
@@ -243,10 +260,11 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			cfg.mu.Lock()
 			cfg.lastApplied[i] = m.CommandIndex
 			cfg.mu.Unlock()
-
-			if (m.CommandIndex+1)%SnapShotInterval == 0 {
+			// fmt.Printf("我是%v,我提交了消息：%v\n",rf.me,m.Command)
+			if (m.CommandIndex+1)%SnapShotInterval == 0 { //每10个日志进行一次snapshot
 				w := new(bytes.Buffer)
 				e := labgob.NewEncoder(w)
+				//将这条信息的index下标 以及 他之前的log存起来
 				e.Encode(m.CommandIndex)
 				var xlog []interface{}
 				for j := 0; j <= m.CommandIndex; j++ {
@@ -267,18 +285,19 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 }
 
-//
 // start or re-start a Raft.
 // if one already exists, "kill" it first.
 // allocate new outgoing port file names, and a new
 // state persister, to isolate previous instance of
 // this server. since we cannot really kill it.
 //
+// start1相当于是重启了
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.crash1(i)
 
 	// a fresh set of outgoing ClientEnd names.
 	// so that old crashed instance's ClientEnds can't send.
+	//make里面要重新读取持久化信息
 	cfg.endnames[i] = make([]string, cfg.n)
 	for j := 0; j < cfg.n; j++ {
 		cfg.endnames[i][j] = randstring(20)
@@ -422,13 +441,11 @@ func (cfg *config) setlongreordering(longrel bool) {
 	cfg.net.LongReordering(longrel)
 }
 
-//
 // check that one of the connected servers thinks
 // it is the leader, and that no other connected
 // server thinks otherwise.
 //
 // try a few times in case re-elections are needed.
-//
 func (cfg *config) checkOneLeader() int {
 	for iters := 0; iters < 10; iters++ {
 		ms := 450 + (rand.Int63() % 100)
@@ -477,10 +494,8 @@ func (cfg *config) checkTerms() int {
 	return term
 }
 
-//
 // check that none of the connected servers
 // thinks it is the leader.
-//
 func (cfg *config) checkNoLeader() {
 	for i := 0; i < cfg.n; i++ {
 		if cfg.connected[i] {

@@ -163,6 +163,10 @@ func checkDefault1(value reflect.Value, depth int, name string) {
 				if what == "" {
 					what = t.Name()
 				}
+				// fmt.Println(value,"hhhh") //字符串 
+				// fmt.Println(reflect.Zero(t),t) //空字符串 
+				// fmt.Println(value)
+				// fmt.Println(t)
 				// this warning typically arises if code re-uses the same RPC reply
 				// variable for multiple RPC calls, or if code restores persisted
 				// state into variable that already have non-default values.

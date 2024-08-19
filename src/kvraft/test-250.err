@@ -1,0 +1,8 @@
+panic: error 1
+
+
+goroutine 215443 [running]:
+6.824/raft.(*Raft).leader_do.func1(0x3)
+	/mit6.824/src/raft/raft.go:1033 +0xac5
+created by 6.824/raft.(*Raft).leader_do
+	/mit6.824/src/raft/raft.go:933 +0x239

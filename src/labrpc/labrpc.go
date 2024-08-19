@@ -5,7 +5,9 @@ package labrpc
 //
 // simulates a network that can lose requests, lose replies,
 // delay messages, and entirely disconnect particular hosts.
-//
+// 模拟一个可以丢失请求、丢失回复、延迟消息以及完全断开特定主机的网络。
+
+
 // we will use the original labrpc.go to test your code for grading.
 // so, while you can modify this code to help you debug, please
 // test against the original before submitting.
@@ -14,7 +16,8 @@ package labrpc
 //
 // sends labgob-encoded values to ensure that RPCs
 // don't include references to program objects.
-//
+// 发送 labgob 编码的值，以确保 RPC 不包含对程序对象的引用。
+
 // net := MakeNetwork() -- holds network, clients, servers.
 // end := net.MakeEnd(endname) -- create a client end-point, to talk to one server.
 // net.AddServer(servername, server) -- adds a named server to network.
@@ -87,7 +90,7 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	req.svcMeth = svcMeth
 	req.argsType = reflect.TypeOf(args)
 	req.replyCh = make(chan replyMsg)
-
+	//将数据信息编码 
 	qb := new(bytes.Buffer)
 	qe := labgob.NewEncoder(qb)
 	if err := qe.Encode(args); err != nil {
@@ -125,7 +128,9 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 type Network struct {
 	mu             sync.Mutex
 	reliable       bool
+	// 当连接被禁用时，在发送时暂停很长时间
 	longDelays     bool                        // pause a long time on send on disabled connection
+	// 有时会长时间延迟回复
 	longReordering bool                        // sometimes delay replies a long time
 	ends           map[interface{}]*ClientEnd  // ends, by name
 	enabled        map[interface{}]bool        // by end name
@@ -225,7 +230,7 @@ func (rn *Network) processReq(req reqMsg) {
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
-		if reliable == false && (rand.Int()%1000) < 100 {
+		if reliable == false && (rand.Int()%1000) < 100 { //相当于是超时 
 			// drop the request, return as if timeout
 			req.replyCh <- replyMsg{false, nil}
 			return
@@ -255,6 +260,7 @@ func (rn *Network) processReq(req reqMsg) {
 				serverDead = rn.isServerDead(req.endname, servername, server)
 				if serverDead {
 					go func() {
+						// 清空通道以让先前创建的 goroutine 终止，取出一个reply 
 						<-ech // drain channel to let the goroutine created earlier terminate
 					}()
 				}
@@ -267,15 +273,18 @@ func (rn *Network) processReq(req reqMsg) {
 		// to an Append, but the server persisted the update
 		// into the old Persister. config.go is careful to call
 		// DeleteServer() before superseding the Persister.
+		// 如果已调用DeleteServer()，即服务器已被终止，则不要回复。
+		// 这是为了避免客户端在执行Append操作时收到积极的回复，但服务器将更新持久化到旧的Persister中。
+		// config.go在替换Persister之前小心地调用DeleteServer()。
 		serverDead = rn.isServerDead(req.endname, servername, server)
 
 		if replyOK == false || serverDead == true {
 			// server was killed while we were waiting; return error.
 			req.replyCh <- replyMsg{false, nil}
-		} else if reliable == false && (rand.Int()%1000) < 100 {
+		} else if reliable == false && (rand.Int()%1000) < 100 { //超时 
 			// drop the reply, return as if timeout
 			req.replyCh <- replyMsg{false, nil}
-		} else if longreordering == true && rand.Intn(900) < 600 {
+		} else if longreordering == true && rand.Intn(900) < 600 { //长延时 
 			// delay the response for a while
 			ms := 200 + rand.Intn(1+rand.Intn(2000))
 			// Russ points out that this timer arrangement will decrease
@@ -289,18 +298,21 @@ func (rn *Network) processReq(req reqMsg) {
 			atomic.AddInt64(&rn.bytes, int64(len(reply.reply)))
 			req.replyCh <- reply
 		}
-	} else {
+	} else { //不可用 
 		// simulate no reply and eventual timeout.
 		ms := 0
 		if rn.longDelays {
 			// let Raft tests check that leader doesn't send
 			// RPCs synchronously.
+			// 让Raft测试检查领导者不会同步发送RPC。
 			ms = (rand.Int() % 7000)
 		} else {
+			// 许多kv测试需要客户端尝试每台服务器，间隔较短的时间。
 			// many kv tests require the client to try each
 			// server in fairly rapid succession.
 			ms = (rand.Int() % 100)
 		}
+		//它并不会sleep 
 		time.AfterFunc(time.Duration(ms)*time.Millisecond, func() {
 			req.replyCh <- replyMsg{false, nil}
 		})
@@ -310,6 +322,8 @@ func (rn *Network) processReq(req reqMsg) {
 
 // create a client end-point.
 // start the thread that listens and delivers.
+// 创建一个客户端端点。
+// 启动监听和传递的线程。
 func (rn *Network) MakeEnd(endname interface{}) *ClientEnd {
 	rn.mu.Lock()
 	defer rn.mu.Unlock()
@@ -384,6 +398,8 @@ func (rn *Network) GetTotalBytes() int64 {
 // the same rpc dispatcher. so that e.g. both a Raft
 // and a k/v server can listen to the same rpc endpoint.
 //
+// 服务器是一组服务的集合，它们都共享同一个RPC调度程序。
+// 因此，例如Raft和k/v服务器都可以监听同一个RPC端点。
 type Server struct {
 	mu       sync.Mutex
 	services map[string]*Service
@@ -437,6 +453,8 @@ func (rs *Server) GetCount() int {
 
 // an object with methods that can be called via RPC.
 // a single server may have more than one Service.
+// 具有可以通过RPC调用的方法的对象。
+// 一个单独的服务器可以拥有多个服务。
 type Service struct {
 	name    string
 	rcvr    reflect.Value
@@ -450,7 +468,6 @@ func MakeService(rcvr interface{}) *Service {
 	svc.rcvr = reflect.ValueOf(rcvr)
 	svc.name = reflect.Indirect(svc.rcvr).Type().Name()
 	svc.methods = map[string]reflect.Method{}
-
 	for m := 0; m < svc.typ.NumMethod(); m++ {
 		method := svc.typ.Method(m)
 		mtype := method.Type
